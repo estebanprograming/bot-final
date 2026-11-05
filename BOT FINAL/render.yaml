@@ -1,0 +1,12 @@
+services:
+  - type: worker
+    name: bot-14-15-envivo
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -u bot_live.py
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_TOKEN
+        value: 8792051359:AAEdiOxPj3dbMgOR6HwK0V_Ez0dQ8U_4bZU
+      - key: TELEGRAM_CHAT_ID
+        value: "9202582025"

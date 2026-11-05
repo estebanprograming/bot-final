@@ -1,0 +1,120 @@
+================================================================================
+  GUÍA PASO A PASO: CÓMO PONER TU BOT 14/15 A FUNCIONAR EN INTERNET 24/7 GRATIS
+                          (EXPLICADO COMO PARA UN NIÑO)
+================================================================================
+
+¡Hola! Esta guía fue escrita de forma ultra sencilla, paso por paso, sin palabras
+raras, para que cualquier persona pueda subir este bot a internet en 5 minutos y
+dejarlo vigilando partidos día y noche (24 horas al día, 7 días a la semana) sin
+que se apague nunca.
+
+--------------------------------------------------------------------------------
+¿POR QUÉ GOOGLE COLAB SE TE CERRABA Y SE CAÍA?
+--------------------------------------------------------------------------------
+Google Colab es como una pizarra de escuela: está hecha para hacer pruebas rápidas.
+Si dejas la pestaña cerrada por un rato, o si pasan varias horas, Google "apaga la
+computadora" para ahorrar energía. Por eso en Colab ningún bot puede vivir 24/7.
+
+Para que un bot viva 24/7 necesita un SERVIDOR EN LA NUBE. Un servidor en la nube
+es simplemente una computadora conectada a internet en un edificio seguro que NUNCA
+se apaga, ni de día ni de noche.
+
+A continuación te enseño la forma más fácil y 100% GRATUITA de tener tu servidor.
+
+================================================================================
+MÉTODO 1: RENDER.COM (LA MEJOR OPCIÓN, 100% GRATIS Y NUNCA SE CAE)
+================================================================================
+Render es una empresa enorme que te regala servidores en la nube para programas
+como este. Ya te dejamos todos los archivos preparados (`Procfile`, `render.yaml`,
+`requirements.txt`). Solo tienes que seguir estos 3 pasos:
+
+PASO 1: SUBIR TU CARPETA "BOT FINAL" A GITHUB (TU BAÚL EN LA NUBE)
+-----------------------------------------------------------------
+1. Entra en tu navegador a: https://github.com
+2. Si no tienes cuenta, dale a "Sign up" y crea una gratis con tu correo.
+3. Una vez dentro de GitHub, arriba a la derecha hay un botón con el signo "+" 
+   o un botón verde que dice "New repository" (Nuevo repositorio). Dale clic.
+4. En "Repository name" ponle de nombre: bot-final
+5. Marca la casilla que dice "Public" (Público).
+6. Dale al botón verde abajo: "Create repository".
+7. En la pantalla que aparece, verás un texto en azul que dice: 
+   "uploading an existing file" (subir un archivo existente). Dale clic ahí.
+8. Ahora abre tu carpeta del escritorio llamada "BOT FINAL".
+9. Selecciona TODOS los archivos que están dentro de esa carpeta y arrástralos
+   con el mouse hacia la página de GitHub.
+10. Espera 10 segundos a que carguen todos los archivos y dale al botón verde abajo
+    que dice "Commit changes" (Guardar cambios).
+¡Listo! Ya tus archivos del bot están guardados en internet.
+
+PASO 2: CONECTAR RENDER CON GITHUB
+----------------------------------
+1. Ahora entra en tu navegador a: https://render.com
+2. Dale al botón arriba a la derecha que dice "GET STARTED FOR FREE" o "Sign in".
+3. Elige la opción: "Continue with GitHub" (iniciar sesión con tu cuenta de GitHub).
+4. Dale permisos para conectar. ¡Ya estás dentro de Render!
+
+PASO 3: ENCENDER EL BOT EN LA NUBE
+----------------------------------
+1. En tu panel de Render, dale al botón azul arriba que dice "New +" (Nuevo).
+2. Elige la opción que dice: "Background Worker" (o "Web Service").
+3. Verás una lista con tus proyectos de GitHub. Busca el que dice "bot-final" y 
+   dale al botón "Connect" (Conectar).
+4. En la pantalla que se abre, rellena solo estos campitos:
+   - Name: ponle bot-14-15
+   - Region: déjalo como está (cualquiera sirve)
+   - Branch: main (o master)
+   - Runtime: Python 3
+   - Build Command: escribe exactamente: pip install -r requirements.txt
+   - Start Command: escribe exactamente: python -u bot_live.py
+   - Instance Type: selecciona la opción "Free" ($0 / month).
+5. Dale hasta abajo al botón que dice: "Create Background Worker".
+
+¡Y LISTO! 
+A partir de ese segundo, la computadora de Render instalará el bot y lo encenderá.
+Verás letras negras en la pantalla que dicen:
+"🚀 BOT 14/15 DEFINITIVO EN VIVO INICIADO Y EN LÍNEA (24/7)"
+Y en tu celular, en tu Telegram (@AnalistaGoles2026_bot), te llegará el mensaje
+de bienvenida confirmando que ya está vigilando los partidos.
+Ya puedes cerrar la página, apagar tu computadora personal o irte a dormir: el bot
+seguirá funcionando solo en internet para siempre.
+
+================================================================================
+MÉTODO 2: RAILWAY.APP (OTRA OPCIÓN GRATIS DE 1 SOLO CLIC)
+================================================================================
+Si prefieres Railway en lugar de Render:
+1. Entra a: https://railway.app
+2. Inicia sesión con GitHub ("Login with GitHub").
+3. Dale a "New Project" -> "Deploy from GitHub repo".
+4. Selecciona tu repositorio "bot-final".
+5. Railway leerá automáticamente el archivo `Procfile` que ya te incluí en la carpeta
+   y pondrá a andar el bot solito en 30 segundos.
+
+================================================================================
+MÉTODO 3: EJECUTARLO EN TU PROPIA COMPUTADORA (CUANDO ESTÉS TRABAJANDO)
+================================================================================
+Si algún día quieres probar el bot directamente en tu computadora Windows sin
+subirlo a internet:
+1. Abre la carpeta "BOT FINAL" en tu escritorio.
+2. Haz doble clic en el archivo: `iniciar_bot_windows.bat`
+3. Se abrirá una ventanita negra que te mostrará los partidos que está vigilando.
+4. Mientras esa ventanita esté abierta (puedes minimizarla para que no estorbe),
+   el bot estará vigilando y enviándote las alertas a tu Telegram al minuto 45.
+5. Para apagarlo, solo cierras esa ventana o le das doble clic a `detener_bot_windows.bat`.
+
+================================================================================
+¿CÓMO SABER QUE EL BOT ESTÁ FUNCIONANDO BIEN?
+================================================================================
+1. Mensaje de Bienvenida: Apenas lo enciendes en Render, Railway o en tu PC, te
+   manda un mensaje a tu Telegram diciendo que ya arrancó.
+2. Mensaje de Latido (Heartbeat): Cada 12 horas te mandará un mensajito diciendo
+   "🟢 ESTADO DEL BOT: Sistema operativo 24/7 sin interrupciones".
+3. Alertas al Minuto 45: Cuando un partido oficial llegue al descanso con:
+   - 1-0 o 0-1 (y el que pierde tenga 2 o menos tiros a puerta y cumpla ALTA_CONFIANZA)
+   - 1-1 o 0-2 (y entre los dos sumen 2 o menos tiros a puerta)
+   ¡BING! Te sonará el Telegram con la ficha completa del partido y la apuesta recomendada.
+4. Alerta de Tarjeta Roja en el 2T: Si en un partido donde entramos expulsan a alguien
+   entre el minuto 46 y 65, te mandará un aviso de "⚠️ ALERTA DE CASHOUT" para que
+   puedas asegurar tu dinero.
+
+¡Disfruta tu bot 14/15 en vivo y muchos éxitos en tus entradas!
+================================================================================
