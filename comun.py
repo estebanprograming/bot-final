@@ -20,7 +20,34 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+import logging
+from logging.handlers import RotatingFileHandler
 import config
+
+LOG_PATH = Path(__file__).parent / "caja_negra_operaciones.log"
+
+# Configuración del logger rotativo de la Caja Negra (hasta 5 MB con 3 respaldos)
+_logger = logging.getLogger("CajaNegraBot")
+_logger.setLevel(logging.DEBUG)
+
+if not _logger.handlers:
+    rfh = RotatingFileHandler(str(LOG_PATH), maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
+    fmt = logging.Formatter("[%(asctime)s.%(msecs)03d] [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    rfh.setFormatter(fmt)
+    _logger.addHandler(rfh)
+
+
+def log_evento(categoria: str, mensaje: str, nivel: str = "INFO"):
+    """Registra un evento con timestamp exacto en la Caja Negra persistente."""
+    txt = f"[{categoria}] {mensaje}"
+    if nivel == "DEBUG":
+        _logger.debug(txt)
+    elif nivel == "WARNING":
+        _logger.warning(txt)
+    elif nivel == "ERROR":
+        _logger.error(txt)
+    else:
+        _logger.info(txt)
 
 UTC = timezone.utc
 BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
@@ -99,6 +126,8 @@ def stats_1t(summary: dict, p: Partido, validar_final: bool = False) -> Optional
         return None
     hn = str((hb.get("team") or {}).get("displayName") or p.local)
     an = str((ab.get("team") or {}).get("displayName") or p.visitante)
+    hid = str(hb.get("id") or (hb.get("team") or {}).get("id") or p.local_id or "")
+    aid = str(ab.get("id") or (ab.get("team") or {}).get("id") or p.visitante_id or "")
     first = {s: {"shots": 0, "sot": 0, "corners": 0, "reds": 0} for s in ("L", "V")}
     full = {s: {"shots": 0, "sot": 0, "corners": 0} for s in ("L", "V")}
     eventos = 0
@@ -109,7 +138,19 @@ def stats_1t(summary: dict, p: Partido, validar_final: bool = False) -> Optional
         if not isinstance(play, dict):
             continue
         tipo = str((play.get("type") or {}).get("text", ""))
-        side = lado(str((play.get("team") or {}).get("displayName", "")), hn, an)
+        team_dict = play.get("team") or {}
+        tid = str(team_dict.get("id", ""))
+        tname = str(team_dict.get("displayName", ""))
+        
+        # Priorizar ID único del equipo para evitar errores en clásicos con nombres parecidos
+        side = None
+        if tid and hid and tid == hid:
+            side = "L"
+        elif tid and aid and tid == aid:
+            side = "V"
+        if not side:
+            side = lado(tname, hn, an)
+            
         if not side:
             continue
         per = (play.get("period") or {}).get("number")

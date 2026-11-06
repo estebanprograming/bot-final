@@ -49,9 +49,64 @@ def escuchador_comandos_telegram(token: str, chat_id_objetivo: str):
                     texto = str(msg.get("text") or "").strip()
                     remitente_chat = str(msg.get("chat", {}).get("id") or "")
 
+                    # Seguridad: responder únicamente al chat autorizado del usuario
+                    if chat_id_objetivo and remitente_chat.strip() != str(chat_id_objetivo).strip():
+                        continue
+
                     # Verificar si coincide con el comando y el chat autorizado
                     texto_upper = texto.upper()
-                    if "SOLICITAR ESTADISTICA" in texto_upper or "SOLICITAR ESTADÍSTICA" in texto_upper or texto_upper in ("/STATS", "/ESTADISTICA", "/ESTADISTICAS"):
+                    
+                    # 1. COMANDO RADAR / PARTIDOS
+                    if any(cmd in texto_upper for cmd in ("RADAR", "PARTIDOS", "/RADAR", "/PARTIDOS", "MONITOREO")):
+                        print(f"\n[COMANDO RECIBIDO] '{texto}' de chat {remitente_chat} (Consulta de Radar)")
+                        fecha_hoy = datetime.now(bot.ZONA).strftime("%Y-%m-%d")
+                        radar_items = database.obtener_radar_hoy(fecha_hoy)
+                        
+                        if not radar_items:
+                            comun.enviar_mensaje(
+                                f"📡 <b>RADAR DE LA JORNADA ({fecha_hoy})</b>\n\n"
+                                f"🔍 El bot está realizando su ronda de sondeo. Espera 60 segundos y vuelve a escribir <code>RADAR</code>.",
+                                chat=remitente_chat
+                            )
+                        else:
+                            en_ht = [p for p in radar_items if p.get("estado") == "STATUS_HALFTIME"]
+                            en_juego = [p for p in radar_items if p.get("estado") in ("STATUS_IN_PROGRESS", "STATUS_FIRST_HALF", "STATUS_SECOND_HALF") and p.get("estado") != "STATUS_HALFTIME"]
+                            programados = [p for p in radar_items if p.get("estado") == "STATUS_SCHEDULED"]
+                            finalizados = [p for p in radar_items if p.get("estado") in ("STATUS_FULL_TIME", "STATUS_FINAL")]
+                            
+                            txt = [f"📡 <b>RADAR DE PARTIDOS EN VIVO ({fecha_hoy})</b>\n"]
+                            txt.append(f"🔍 <b>Total partidos bajo vigilancia hoy:</b> {len(radar_items)}\n")
+                            
+                            if en_ht:
+                                txt.append("🟢 <b>EN ENTRETIEMPO (MINUTO 45 - CANDIDATOS):</b>")
+                                for p in en_ht[:5]:
+                                    txt.append(f"• <b>{p['local']} vs {p['visitante']}</b> (HT {p['ht']})\n  👉 <i>{p['diagnostico']}</i>")
+                                txt.append("")
+                                
+                            if en_juego:
+                                txt.append("🟡 <b>EN JUEGO (VIGILANDO MINUTO A MINUTO):</b>")
+                                for p in en_juego[:6]:
+                                    txt.append(f"• <b>{p['local']} vs {p['visitante']}</b> ({p['ht']})\n  👉 <i>{p['diagnostico']}</i>")
+                                txt.append("")
+                                
+                            if programados:
+                                txt.append(f"⚪ <b>PROGRAMADOS PARA MÁS TARDE ({len(programados)} partidos):</b>")
+                                for p in programados[:6]:
+                                    h_str = f"{p['hora'][:5]} | " if p['hora'] else ""
+                                    txt.append(f"• {h_str}{p['liga'][:18]}: {p['local']} vs {p['visitante']}")
+                                if len(programados) > 6:
+                                    txt.append(f"  <i>...y {len(programados)-6} partidos más en el calendario.</i>")
+                                txt.append("")
+                                
+                            if finalizados:
+                                txt.append(f"🏁 <b>FINALIZADOS HOY:</b> {len(finalizados)} partidos en la jornada.")
+                                
+                            txt.append("\n📄 <i>Escribe 'SOLICITAR ESTADISTICA' para descargar el PDF con todos los detalles y apuestas.</i>")
+                            
+                            comun.enviar_mensaje("\n".join(txt), chat=remitente_chat)
+
+                    # 2. COMANDO SOLICITAR ESTADISTICA (REPORTE PDF)
+                    elif "SOLICITAR ESTADISTICA" in texto_upper or "SOLICITAR ESTADÍSTICA" in texto_upper or texto_upper in ("/STATS", "/ESTADISTICA", "/ESTADISTICAS"):
                         print(f"\n[COMANDO RECIBIDO] '{texto}' de chat {remitente_chat}")
                         
                         # Mensaje de confirmación inmediata
@@ -83,6 +138,30 @@ def escuchador_comandos_telegram(token: str, chat_id_objetivo: str):
                             f"✅ <b>Ganadas:</b> {m['ganadas']} | ❌ <b>Perdidas:</b> {m['perdidas']} | ⏳ <b>En juego:</b> {m['pendientes']}\n"
                             f"🏆 <b>Efectividad Real:</b> {m['efectividad']:.1f}%\n\n"
                             f"📄 <i>El PDF con el desglose día por día y la lista completa de partidos ya fue enviado arriba.</i>",
+                            chat=remitente_chat
+                        )
+
+                    # 3. COMANDO DESCARGAR LOGS / CAJA NEGRA
+                    elif any(cmd in texto_upper for cmd in ("DESCARGAR LOGS", "CAJA NEGRA", "SOLICITAR LOGS", "LOGS", "/LOGS", "DIAGNOSTICO")):
+                        print(f"\n[COMANDO RECIBIDO] '{texto}' de chat {remitente_chat} (Caja Negra)")
+                        comun.log_evento("TELEGRAM", f"Solicitud de descarga de Caja Negra recibida de {remitente_chat}")
+                        
+                        comun.enviar_mensaje(
+                            "📦 <b>Extrayendo registros de la Caja Negra...</b>\nGenerando archivo de bitácora con el historial segundo a segundo de todas las decisiones, llamadas de API y eventos del bot.",
+                            chat=remitente_chat
+                        )
+                        
+                        if not comun.LOG_PATH.exists():
+                            comun.log_evento("SISTEMA", "Caja negra inicializada para envío a Telegram.")
+                        
+                        comun.enviar_pdf(
+                            str(comun.LOG_PATH),
+                            caption="📦 <b>Caja Negra Oficial — Bitácora de Auditoría 24/7</b>\nHistorial cronológico de todos los actos y decisiones del bot.",
+                            chat=remitente_chat
+                        )
+                        comun.enviar_mensaje(
+                            "✅ <b>Caja Negra enviada con éxito arriba.</b>\n"
+                            "Si detectas algún comportamiento inesperado o quieres auditar alguna decisión, descárgate ese archivo y compártemelo para diagnosticar y reparar cualquier anomalía de inmediato.",
                             chat=remitente_chat
                         )
 
@@ -141,12 +220,14 @@ def run_live_247(titulo: str = "BOT 14/15 EN VIVO"):
     print("=" * 70)
 
     # Mensaje de arranque a Telegram
+    comun.log_evento("INICIO", f"{titulo} iniciado. Canal Telegram: {config.TELEGRAM_CHAT_ID}. Filtro: {config.PERFIL_PREMATCH}")
     comun.enviar_mensaje(
         f"🚀 <b>{titulo} INICIADO Y EN LÍNEA (24/7)</b>\n\n"
         f"📡 <b>Modo:</b> Monitoreo en tiempo real al descanso (minuto 45)\n"
         f"⚙️ <b>Filtro:</b> ALTA_CONFIANZA (-3.5 y -4.5)\n"
         f"🛡️ <b>Condición HT:</b> SOT &le; 2 (del que pierde en 1G / total en 2G)\n"
-        f"📊 <b>Estadísticas:</b> Escribe <code>SOLICITAR ESTADISTICA</code> en cualquier momento y te enviaré el PDF con los resultados día a día.\n"
+        f"📊 <b>Estadísticas:</b> Escribe <code>SOLICITAR ESTADISTICA</code> o <code>RADAR</code> en cualquier momento.\n"
+        f"📦 <b>Caja Negra:</b> Escribe <code>DESCARGAR LOGS</code> para obtener la bitácora completa de auditoría.\n"
         f"🟢 <b>Estado:</b> Vigilancia activa de partidos de la jornada."
     )
 
@@ -204,65 +285,122 @@ def run_live_247(titulo: str = "BOT 14/15 EN VIVO"):
                 )
 
             # -------------------------------------------------------------
-            # 3. Sondeo del Scoreboard en Vivo y Registro en DB
+            # 2.5. Seguimiento Directo de Partidos Activos (Inmune a Medianoche)
             # -------------------------------------------------------------
-            evs = client.scoreboard(hoy_ymd, cobertura=config.COBERTURA)
+            if partidos_activos and config.MONITOREAR_2T:
+                for act_id in list(partidos_activos.keys()):
+                    act = partidos_activos[act_id]
+                    d_act = client.summary(act_id, ttl=15)
+                    if not d_act:
+                        continue
+                    hdr_act = (d_act.get("header") or {}).get("competitions") or []
+                    if not hdr_act:
+                        continue
+                    comp_act = hdr_act[0]
+                    st_act = comp_act.get("status", {}) or {}
+                    tp_act = st_act.get("type", {}) or {}
+                    st_name = str(tp_act.get("name", "")).upper()
+                    
+                    # 1. Chequeo de expulsión en 2T (min 46 al 70)
+                    if not act["alertado_roja"] and st_name not in ("STATUS_SCHEDULED", "STATUS_HALFTIME"):
+                        comms = d_act.get("commentary") or []
+                        for c in comms:
+                            play = c.get("play") or {}
+                            if str((play.get("type") or {}).get("text", "")) == "Red Card":
+                                m_min = comun.minuto_de((play.get("clock") or {}).get("displayValue"))
+                                if 46 <= m_min <= 70:
+                                    comun.enviar_mensaje(
+                                        f"⚠️ <b>ALERTA DE CASHOUT / COBERTURA (2T)</b> ⚠️\n\n"
+                                        f"⚽ <b>{act['local']} vs {act['visita']}</b>\n"
+                                        f"⏱ <b>Minuto:</b> {m_min}' del Segundo Tiempo\n"
+                                        f"🟥 <b>Tarjeta Roja detectada en el 2T.</b>\n\n"
+                                        f"💡 <i>Se sugiere asegurar ganancias o evaluar cierre anticipado para mitigar el desorden táctico.</i>"
+                                    )
+                                    act["alertado_roja"] = True
+                                    break
+                    
+                    # 2. Si finalizó, resolver apuesta automáticamente
+                    if st_name in ("STATUS_FULL_TIME", "STATUS_FINAL"):
+                        cs_act = comp_act.get("competitors") or []
+                        l_ft = bot.num_estricto(cs_act[0].get("score")) if len(cs_act) > 0 else 0
+                        v_ft = bot.num_estricto(cs_act[1].get("score")) if len(cs_act) > 1 else 0
+                        ft_str = f"{l_ft}-{v_ft}"
+                        tot_ft = (l_ft or 0) + (v_ft or 0)
+                        gano = 1 if tot_ft < act["linea"] else 0
+                        
+                        database.actualizar_resultado_apuesta(act_id, ft_str, gano)
+                        res_txt = "GANADA ✅" if gano == 1 else "PERDIDA ❌"
+                        print(f"[PARTIDO FINALIZADO] {act['local']} vs {act['visita']} | FT: {ft_str} | Línea -{act['linea']} -> {res_txt}")
+                        partidos_activos.pop(act_id, None)
+
+            # -------------------------------------------------------------
+            # 3. Sondeo del Scoreboard en Vivo y Registro en DB (Datos Frescos)
+            # -------------------------------------------------------------
+            evs = client.scoreboard_live(hoy_ymd)
             for ev in evs:
-                p = bot.parsear_evento(ev, hoy_ymd)
+                # 1. Parseo para eventos en vivo (Halftime) o finalizados (Full-Time)
+                p = bot.parsear_evento(ev, hoy_ymd, live=True) or bot.parsear_evento(ev, hoy_ymd, live=False)
+
+                # 2. Registrar en la base de datos de auditoría todos los partidos de ligas permitidas
+                comp = (ev.get("competitions") or [{}])[0]
+                status_raw = comp.get("status", {}) or {}
+                tipo_raw = status_raw.get("type", {}) or {}
+                estado_actual = str(tipo_raw.get("name", "")).upper()
+                lid, slug, nombre_liga = bot.liga_desde_evento(ev)
+                
+                hora_match = ""
+                date_raw = str(ev.get("date", ""))
+                try:
+                    if date_raw:
+                        dt_utc = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
+                        hora_match = dt_utc.astimezone(bot.ZONA).strftime("%H:%M")
+                except Exception:
+                    hora_match = date_raw[11:16] if len(date_raw) >= 16 else ""
+
+                if slug and lid in bot.LIGAS_PERMITIDAS:
+                    loc_raw, vis_raw = bot._competidores(comp)
+                    if loc_raw and vis_raw:
+                        loc_nom = str((loc_raw.get("team") or {}).get("displayName", ""))
+                        vis_nom = str((vis_raw.get("team") or {}).get("displayName", ""))
+                        ht_str = f"{p.goles_local_ht}-{p.goles_visitante_ht}" if (p and p.tiene_ht) else "SIN_HT"
+                        
+                        clock_txt = str(status_raw.get("displayClock", "")).strip()
+                        l_sc = str(loc_raw.get("score", "0"))
+                        v_sc = str(vis_raw.get("score", "0"))
+                        
+                        diag = "Programado para hoy"
+                        if estado_actual == "STATUS_SCHEDULED":
+                            diag = "Programado para hoy"
+                        elif estado_actual in ("STATUS_IN_PROGRESS", "STATUS_FIRST_HALF"):
+                            diag = f"En juego 1T ({clock_txt} | {l_sc}-{v_sc}) - Esperando descanso min 45"
+                        elif estado_actual == "STATUS_HALFTIME":
+                            diag = f"En descanso ({ht_str}) - Evaluando tiros y filtros"
+                        elif estado_actual in ("STATUS_FULL_TIME", "STATUS_FINAL"):
+                            diag = f"Finalizado ({l_sc}-{v_sc})"
+                        else:
+                            diag = f"En juego 2T ({clock_txt} | {l_sc}-{v_sc})"
+
+                        database.registrar_partido_analizado(
+                            event_id=str(ev.get("id", "")),
+                            fecha=hoy_str,
+                            hora=hora_match,
+                            liga=nombre_liga,
+                            local=loc_nom,
+                            visitante=vis_nom,
+                            ht=ht_str,
+                            estado=estado_actual,
+                            diagnostico=diag
+                        )
+
                 if not p:
                     continue
 
-                ht_str = f"{p.goles_local_ht}-{p.goles_visitante_ht}" if p.tiene_ht else "SIN_HT"
-                
-                # Registrar en la base de datos de auditoría
-                database.registrar_partido_analizado(
-                    event_id=p.event_id,
-                    fecha=hoy_str,
-                    liga=p.liga_nombre,
-                    local=p.local_nombre,
-                    visitante=p.visitante_nombre,
-                    ht=ht_str,
-                    estado=p.estado
-                )
-
-                # Seguimiento del segundo tiempo (Monitor de Roja para Cashout y Actualización de FT)
-                if p.event_id in partidos_activos and config.MONITOREAR_2T:
-                    act = partidos_activos[p.event_id]
-                    
-                    # 1. Chequeo de expulsión en 2T (min 46 al 70)
-                    if not act["alertado_roja"] and p.estado not in ("STATUS_SCHEDULED", "STATUS_HALFTIME"):
-                        d_live = client.summary(p.event_id, ttl=15)
-                        if d_live:
-                            comms = d_live.get("commentary") or []
-                            for c in comms:
-                                play = c.get("play") or {}
-                                if str((play.get("type") or {}).get("text", "")) == "Red Card":
-                                    m_min = comun.minuto_de((play.get("clock") or {}).get("displayValue"))
-                                    if 46 <= m_min <= 70:
-                                        comun.enviar_mensaje(
-                                            f"⚠️ <b>ALERTA DE CASHOUT / COBERTURA (2T)</b> ⚠️\n\n"
-                                            f"⚽ <b>{act['local']} vs {act['visita']}</b>\n"
-                                            f"⏱ <b>Minuto:</b> {m_min}' del Segundo Tiempo\n"
-                                            f"🟥 <b>Tarjeta Roja detectada en el 2T.</b>\n\n"
-                                            f"💡 <i>Se sugiere asegurar ganancias o evaluar cierre anticipado para mitigar el desorden táctico.</i>"
-                                        )
-                                        act["alertado_roja"] = True
-                                        break
-
-                    # 2. Si el partido finalizó, actualizar FT y win/loss en la DB
-                    if p.estado in ("STATUS_FULL_TIME", "STATUS_FINAL"):
-                        ft_str = f"{p.goles_local_ft}-{p.goles_visitante_ft}"
-                        goles_totales = (p.goles_local_ft or 0) + (p.goles_visitante_ft or 0)
-                        gano = 1 if goles_totales < act["linea"] else 0
-                        
-                        database.actualizar_resultado_apuesta(p.event_id, ft_str, gano)
-                        res_txt = "GANADA ✅" if gano == 1 else "PERDIDA ❌"
-                        print(f"[PARTIDO FINALIZADO] {act['local']} vs {act['visita']} | FT: {ft_str} | Línea -{act['linea']} -> {res_txt}")
-                        
-                        partidos_activos.pop(p.event_id, None)
-
                 # Descartar si no tiene marcador HT o no es candidato (1 o 2 goles)
                 if not p.tiene_ht or p.total_ht not in (1, 2):
+                    if p and p.tiene_ht and p.total_ht == 0:
+                        database.registrar_partido_analizado(p.event_id, hoy_str, hora_match, p.liga_nombre, p.local_nombre, p.visitante_nombre, "0-0", p.estado, diagnostico="Descartado HT: Marcador 0-0 sin gol")
+                    elif p and p.tiene_ht and p.total_ht >= 3:
+                        database.registrar_partido_analizado(p.event_id, hoy_str, hora_match, p.liga_nombre, p.local_nombre, p.visitante_nombre, f"{p.goles_local_ht}-{p.goles_visitante_ht}", p.estado, diagnostico=f"Descartado HT: 3+ goles ({p.total_ht})")
                     continue
 
                 # Ignorar partidos no iniciados o ya finalizados para nuevas alertas
@@ -317,16 +455,22 @@ def run_live_247(titulo: str = "BOT 14/15 EN VIVO"):
                 # CASO 2: 2 GOLES AL DESCANSO (solo 1-1 o 0-2) -> Línea -4.5
                 # ---------------------------------------------------------
                 elif p.total_ht == 2:
+                    if ht == "2-0":
+                        database.registrar_partido_analizado(p.event_id, hoy_str, hora_match, p.liga_nombre, p.local_nombre, p.visitante_nombre, ht, p.estado, diagnostico="Descartado HT: Marcador 2-0 prohibido")
+                        continue
                     decision = (ht in ("1-1", "0-2")) and (sot_tot_val <= config.SOT_TOT_MAX_2G)
                     linea = 4.5
                     motivo = f"Marcador {ht} | SOT total combinado: {sot_tot_val} (&le; {config.SOT_TOT_MAX_2G})"
 
                 if not decision:
+                    database.registrar_partido_analizado(p.event_id, hoy_str, hora_match, p.liga_nombre, p.local_nombre, p.visitante_nombre, ht, p.estado, diagnostico=f"Descartado HT: {motivo}")
+                    comun.log_evento("FILTRO_HT", f"{p.local_nombre} vs {p.visitante_nombre} (HT {ht}) descartado: {motivo}")
                     continue
 
                 # ---------------------------------------------------------
                 # DISPARO DE ALERTA OFICIAL A TELEGRAM
                 # ---------------------------------------------------------
+                comun.log_evento("ALERTA_HT", f"ENTRADA CONFIRMADA: {p.local_nombre} vs {p.visitante_nombre} (HT {ht}) -> Menos {linea} | Motivo: {motivo}")
                 msg_alerta = (
                     f"🚨 <b>ALERTA BOT 14/15 — ENTRADA CONFIRMADA (HT)</b> 🚨\n\n"
                     f"⚽ <b>Partido:</b> {p.local_nombre} vs {p.visitante_nombre}\n"
@@ -364,6 +508,11 @@ def run_live_247(titulo: str = "BOT 14/15 EN VIVO"):
                     sot_tot=sot_tot_val,
                     linea=linea,
                     motivo=motivo
+                )
+                database.registrar_partido_analizado(
+                    p.event_id, hoy_str, hora_match, p.liga_nombre,
+                    p.local_nombre, p.visitante_nombre, ht, p.estado,
+                    diagnostico=f"🚨 ALERTA CONFIRMADA: Menos {linea} Goles"
                 )
 
                 # Registro en archivo json y seguimiento de 2T

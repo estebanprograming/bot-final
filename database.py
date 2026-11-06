@@ -11,6 +11,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from contextlib import contextmanager
 
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
@@ -23,28 +24,44 @@ from reportlab.pdfgen import canvas
 DB_PATH = Path(__file__).parent / "registro_operaciones.db"
 
 
+@contextmanager
 def get_connection():
-    conn = sqlite3.connect(str(DB_PATH), timeout=15)
+    conn = sqlite3.connect(str(DB_PATH), timeout=25)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db():
     with get_connection() as conn:
         cursor = conn.cursor()
-        # 1. Tabla de partidos analizados (conteo de auditoría)
+        # 1. Tabla de partidos analizados (conteo de auditoria y radar)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS partidos_analizados (
                 event_id TEXT PRIMARY KEY,
                 fecha TEXT,
+                hora TEXT,
                 liga TEXT,
                 local TEXT,
                 visitante TEXT,
                 ht TEXT,
                 estado TEXT,
+                diagnostico TEXT,
                 creado_at TEXT
             )
         """)
+        # Migraciones si la tabla ya existia previamente
+        for col in ["hora", "diagnostico"]:
+            try:
+                cursor.execute(f"ALTER TABLE partidos_analizados ADD COLUMN {col} TEXT DEFAULT ''")
+            except Exception:
+                pass
         # 2. Tabla de apuestas ejecutadas
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS apuestas (
@@ -79,21 +96,31 @@ def init_db():
         conn.commit()
 
 
-def registrar_partido_analizado(event_id: str, fecha: str, liga: str, local: str, visitante: str, ht: str, estado: str):
+def registrar_partido_analizado(event_id: str, fecha: str, hora: str, liga: str, local: str, visitante: str, ht: str, estado: str, diagnostico: str = ""):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT OR IGNORE INTO partidos_analizados (event_id, fecha, liga, local, visitante, ht, estado, creado_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (str(event_id), str(fecha), str(liga), str(local), str(visitante), str(ht), str(estado), datetime.now().isoformat()))
-        
-        # Actualizar contador diario
-        cursor.execute("""
-            INSERT INTO resumen_diario (fecha, total_analizados, total_candidatos_ht, total_entradas, ganadas, perdidas, pendientes)
-            VALUES (?, 1, 0, 0, 0, 0, 0)
-            ON CONFLICT(fecha) DO UPDATE SET total_analizados = total_analizados + 1
-        """, (str(fecha),))
+            INSERT INTO partidos_analizados (event_id, fecha, hora, liga, local, visitante, ht, estado, diagnostico, creado_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET 
+                hora = CASE WHEN excluded.hora != '' THEN excluded.hora ELSE partidos_analizados.hora END,
+                ht = excluded.ht, 
+                estado = excluded.estado,
+                diagnostico = CASE WHEN excluded.diagnostico != '' THEN excluded.diagnostico ELSE partidos_analizados.diagnostico END
+        """, (str(event_id), str(fecha), str(hora), str(liga), str(local), str(visitante), str(ht), str(estado), str(diagnostico), datetime.now().isoformat()))
         conn.commit()
+
+
+def obtener_radar_hoy(fecha_hoy: str) -> list:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT hora, liga, local, visitante, ht, estado, diagnostico
+            FROM partidos_analizados
+            WHERE fecha = ?
+            ORDER BY hora ASC, liga ASC
+        """, (str(fecha_hoy),))
+        return [dict(row) for row in cursor.fetchall()]
 
 
 def registrar_apuesta(event_id: str, fecha: str, liga: str, local: str, visitante: str,
@@ -158,17 +185,17 @@ def obtener_metricas_globales(fecha_hoy: str) -> dict:
     with get_connection() as conn:
         cursor = conn.cursor()
         
-        # Total analizados hoy
-        cursor.execute("SELECT total_analizados FROM resumen_diario WHERE fecha = ?", (fecha_hoy,))
+        # Conteo exacto de partidos unicos analizados hoy
+        cursor.execute("SELECT COUNT(DISTINCT event_id) as cnt FROM partidos_analizados WHERE fecha = ?", (fecha_hoy,))
         r_hoy = cursor.fetchone()
-        analizados_hoy = r_hoy["total_analizados"] if r_hoy else 0
+        analizados_hoy = r_hoy["cnt"] if r_hoy else 0
 
-        # Total analizados histórico acumulado
-        cursor.execute("SELECT SUM(total_analizados) as tot FROM resumen_diario")
+        # Conteo exacto de partidos unicos historico acumulado
+        cursor.execute("SELECT COUNT(DISTINCT event_id) as cnt FROM partidos_analizados")
         r_tot = cursor.fetchone()
-        analizados_historico = r_tot["tot"] if (r_tot and r_tot["tot"]) else analizados_hoy
+        analizados_historico = r_tot["cnt"] if r_tot else analizados_hoy
 
-        # Métricas de apuestas
+        # Metricas de apuestas
         cursor.execute("SELECT COUNT(*) as total, SUM(CASE WHEN win=1 THEN 1 ELSE 0 END) as w, SUM(CASE WHEN win=0 THEN 1 ELSE 0 END) as l, SUM(CASE WHEN estado='EN_JUEGO' THEN 1 ELSE 0 END) as p FROM apuestas")
         r_ap = cursor.fetchone()
         total_apuestas = r_ap["total"] or 0
@@ -193,8 +220,24 @@ def obtener_metricas_globales(fecha_hoy: str) -> dict:
 def obtener_desglose_dias() -> list:
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT fecha, total_analizados, total_entradas, ganadas, perdidas, pendientes FROM resumen_diario ORDER BY fecha DESC")
-        return [dict(row) for row in cursor.fetchall()]
+        cursor.execute("""
+            SELECT 
+                p.fecha, 
+                COUNT(DISTINCT p.event_id) as total_analizados,
+                COUNT(a.event_id) as total_entradas,
+                SUM(CASE WHEN a.win=1 THEN 1 ELSE 0 END) as ganadas,
+                SUM(CASE WHEN a.win=0 THEN 1 ELSE 0 END) as perdidas,
+                SUM(CASE WHEN a.estado='EN_JUEGO' THEN 1 ELSE 0 END) as pendientes
+            FROM partidos_analizados p
+            LEFT JOIN apuestas a ON p.fecha = a.fecha
+            GROUP BY p.fecha
+            ORDER BY p.fecha DESC
+        """)
+        rows = [dict(row) for row in cursor.fetchall()]
+        if not rows:
+            cursor.execute("SELECT fecha, total_analizados, total_entradas, ganadas, perdidas, pendientes FROM resumen_diario ORDER BY fecha DESC")
+            rows = [dict(row) for row in cursor.fetchall()]
+        return rows
 
 
 def obtener_todas_apuestas() -> list:
@@ -392,6 +435,41 @@ def generar_pdf_estadisticas(ruta_pdf: str, fecha_hoy: str) -> str:
         ('PADDING', (0,0), (-1,-1), 2.5),
     ]))
     story.append(t_ap)
+    story.append(Spacer(1, 10))
+
+    # =========================================================================
+    # SECCIÓN 3: RADAR DE PARTIDOS ANALIZADOS Y EN VIGILANCIA HOY
+    # =========================================================================
+    partidos_hoy = obtener_radar_hoy(fecha_hoy)
+    if partidos_hoy:
+        story.append(KeepTogether([
+            Paragraph("3. Radar de Partidos Analizados y en Vigilancia (Jornada de Hoy)", h2_style),
+            Paragraph(f"Lista en tiempo real de los {len(partidos_hoy)} encuentros detectados en el radar de hoy, su estado y el dictamen técnico del bot.", sub_style)
+        ]))
+        t_rad_data = [[
+            Paragraph("<b>Hora</b>", th_style),
+            Paragraph("<b>Liga</b>", th_style),
+            Paragraph("<b>Partido (Local vs Visita)</b>", th_style),
+            Paragraph("<b>HT</b>", th_style),
+            Paragraph("<b>Diagnóstico y Estado del Bot</b>", th_style),
+        ]]
+        for p in partidos_hoy[:35]:
+            t_rad_data.append([
+                Paragraph(str(p.get("hora", ""))[:5], tc_center),
+                Paragraph(str(p.get("liga", ""))[:20], tc_norm),
+                Paragraph(f"<b>{p.get('local', '')}</b> vs {p.get('visitante', '')}"[:32], tc_norm),
+                Paragraph(str(p.get("ht", "SIN_HT")), tc_center),
+                Paragraph(str(p.get("diagnostico", p.get("estado", ""))), tc_norm),
+            ])
+        t_rad = Table(t_rad_data, colWidths=[40, 115, 170, 50, 165])
+        t_rad.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor("#CBD5E0")),
+            ('PADDING', (0,0), (-1,-1), 2.5),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor("#F7FAFC")]),
+        ]))
+        story.append(t_rad)
 
     doc.build(story, canvasmaker=NumberedCanvas)
     return ruta_pdf
