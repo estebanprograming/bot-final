@@ -8,6 +8,7 @@ BASE DE DATOS Y GESTOR DE ESTADÍSTICAS PERSISTENTES — BOT 14/15 EN VIVO
 """
 import os
 import sqlite3
+import html
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -417,10 +418,13 @@ def generar_pdf_estadisticas(ruta_pdf: str, fecha_hoy: str) -> str:
             st_res = tc_win if a["win"] == 1 else (tc_loss if a["win"] == 0 else tc_pend)
             res_txt = "GANADA" if a["win"] == 1 else ("PERDIDA" if a["win"] == 0 else "EN JUEGO")
             sot_info = f"pierde={a['sot_pierde']}" if a["linea"] == 3.5 else f"tot={a['sot_tot']}"
+            loc_a = html.escape(str(a.get("local", ""))[:18])
+            vis_a = html.escape(str(a.get("visitante", ""))[:18])
+            liga_a = html.escape(str(a.get("liga", ""))[:8])
             t_ap_data.append([
                 Paragraph(f"{str(a['fecha'])[-5:]} {a['hora'][:5]}", tc_norm),
-                Paragraph(f"{a['local']} vs {a['visitante']}"[:30], tc_norm),
-                Paragraph(str(a["liga"])[:8], tc_center),
+                Paragraph(f"{loc_a} vs {vis_a}", tc_norm),
+                Paragraph(liga_a, tc_center),
                 Paragraph(str(a["ht"]), tc_center),
                 Paragraph(sot_info, tc_center),
                 Paragraph(f"-{a['linea']}", tc_center),
@@ -454,12 +458,16 @@ def generar_pdf_estadisticas(ruta_pdf: str, fecha_hoy: str) -> str:
             Paragraph("<b>Diagnóstico y Estado del Bot</b>", th_style),
         ]]
         for p in partidos_hoy[:35]:
+            loc_s = html.escape(str(p.get("local", ""))[:18])
+            vis_s = html.escape(str(p.get("visitante", ""))[:18])
+            liga_s = html.escape(str(p.get("liga", ""))[:20])
+            diag_s = html.escape(str(p.get("diagnostico", p.get("estado", "")))[:45])
             t_rad_data.append([
-                Paragraph(str(p.get("hora", ""))[:5], tc_center),
-                Paragraph(str(p.get("liga", ""))[:20], tc_norm),
-                Paragraph(f"<b>{p.get('local', '')}</b> vs {p.get('visitante', '')}"[:32], tc_norm),
-                Paragraph(str(p.get("ht", "SIN_HT")), tc_center),
-                Paragraph(str(p.get("diagnostico", p.get("estado", ""))), tc_norm),
+                Paragraph(html.escape(str(p.get("hora", ""))[:5]), tc_center),
+                Paragraph(liga_s, tc_norm),
+                Paragraph(f"<b>{loc_s}</b> vs {vis_s}", tc_norm),
+                Paragraph(html.escape(str(p.get("ht", "SIN_HT"))), tc_center),
+                Paragraph(diag_s, tc_norm),
             ])
         t_rad = Table(t_rad_data, colWidths=[40, 115, 170, 50, 165])
         t_rad.setStyle(TableStyle([

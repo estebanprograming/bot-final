@@ -212,6 +212,14 @@ def enviar_mensaje(texto: str, token: str = "", chat: str = "", parse_mode: str 
             data=data,
             timeout=25
         )
+        if r.status_code == 429:
+            try:
+                espera = int(r.json().get("parameters", {}).get("retry_after", 3))
+                print(f"[WARN] Telegram 429 Rate Limit detectado. Pausando {espera + 1}s...")
+                time.sleep(espera + 1)
+                r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=25)
+            except Exception:
+                pass
         if r.status_code == 200:
             return True
         else:
@@ -238,6 +246,20 @@ def enviar_pdf(ruta: str, caption: str = "", token: str = "", chat: str = "") ->
                 files={"document": f},
                 timeout=60
             )
+        if r.status_code == 429:
+            try:
+                espera = int(r.json().get("parameters", {}).get("retry_after", 4))
+                print(f"[WARN] Telegram 429 en Documento. Pausando {espera + 1}s...")
+                time.sleep(espera + 1)
+                with open(ruta, "rb") as f:
+                    r = requests.post(
+                        f"https://api.telegram.org/bot{token}/sendDocument",
+                        data={"chat_id": chat, "caption": caption[:1000]},
+                        files={"document": f},
+                        timeout=60
+                    )
+            except Exception:
+                pass
         return r.status_code == 200
     except Exception as e:
         print(f"[ERROR] Excepción al enviar PDF a Telegram: {e}")
