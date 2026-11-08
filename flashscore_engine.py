@@ -101,26 +101,32 @@ def obtener_partidos_dia(modo: str = "en_vivo") -> List[Dict[str, Any]]:
             ht_h = int(ba_m.group(1)) if ba_m else None
             ht_a = int(bb_m.group(1)) if bb_m else None
 
-            # Minuto o reloj
+            # Minuto, periodo o reloj (AC contiene el código exacto de etapa: 12 = Descanso)
             ac_m = re.search(r"AC÷([^¬]+)", p)
-            reloj = ac_m.group(1).strip() if ac_m else ""
+            stage_code = ac_m.group(1).strip() if ac_m else ""
+            reloj = stage_code
 
-            # Status codes:
+            # Detección infalible de entretiempo (código 12 en AC o texto Descanso)
+            es_descanso = (stage_code == "12" or "descanso" in stage_code.lower() or "ht" in stage_code.lower() or "half" in stage_code.lower())
+
+            # Status codes unificados:
             # 1 = Por empezar
             # 2 = 1er tiempo en juego
             # 12 = Entretiempo / Descanso exacto (MINUTO 45)
             # 3 = Finalizado
             # 6, 7, 13 = 2do tiempo en juego
+            effective_status = "12" if es_descanso else (stage_code if stage_code in ("1", "2", "3", "6", "7", "13") else status_code)
+
             partidos.append({
                 "id": mid,
                 "liga": current_league,
                 "local": home,
                 "visitante": away,
-                "status": status_code,
+                "status": effective_status,
                 "reloj": reloj,
-                "es_descanso": (status_code == "12"),
-                "es_en_vivo": status_code in ("2", "12", "13", "6", "7"),
-                "es_finalizado": (status_code == "3"),
+                "es_descanso": es_descanso,
+                "es_en_vivo": (status_code == "2" or es_descanso or stage_code in ("2", "12", "13", "6", "7")),
+                "es_finalizado": (status_code == "3" or stage_code == "3"),
                 "ht_l": ht_h,
                 "ht_v": ht_a,
                 "ft_l": ft_h,
@@ -215,6 +221,26 @@ def obtener_datos_exactos_ht(match_id: str) -> Tuple[Optional[Tuple[int, int]], 
     return ht_score, stats
 
 
+def es_liga_prohibida_fs(liga: str) -> bool:
+    """
+    Verifica si la liga pertenece a la 5ª división inglesa (EC / National League / Vanarama / Conference)
+    con precisión quirúrgica para evitar bloquear otras ligas internacionales.
+    """
+    l_low = (liga or "").lower()
+    es_exclusivo_ingles = any(p in l_low for p in (
+        "vanarama",
+        "conference national",
+        "conference premier",
+        "english national league",
+        "national league (inglaterra)",
+        "national league (england)"
+    ))
+    es_inglaterra = any(p in l_low for p in ("inglaterra", "england", "eng.", "uk", "gran bret"))
+    es_national = "national league" in l_low
+
+    return es_exclusivo_ingles or (es_inglaterra and es_national)
+
+
 def escanear_partidos_al_descanso() -> List[Dict[str, Any]]:
     """
     Sondea el feed en vivo y devuelve de inmediato los partidos que están
@@ -225,6 +251,10 @@ def escanear_partidos_al_descanso() -> List[Dict[str, Any]]:
     
     resultados = []
     for p in en_ht:
+        # Exclusión preventiva de la 5ª división inglesa (EC / National League)
+        if es_liga_prohibida_fs(p.get("liga", "")):
+            continue
+
         mid = p["id"]
         ht_score, stats = obtener_datos_exactos_ht(mid)
         # Si no viene en el timeline, intentar con los tokens de cabecera
@@ -236,3 +266,120 @@ def escanear_partidos_al_descanso() -> List[Dict[str, Any]]:
         resultados.append(p)
         
     return resultados
+
+
+def detectar_roja_2t(match_id: str) -> bool:
+    """
+    Verifica si en el 2º tiempo ocurrió alguna tarjeta roja en Flashscore:
+    1. Revisa el timeline de incidencias df_sui_1 (donde IA÷2 indica 2º tiempo y IK÷Red Card).
+    2. Revisa el bloque df_st_1 (SE÷2nd Half para tarjetas rojas).
+    """
+    clean_id = match_id.replace("FS_", "")
+    # 1. Timeline de incidencias
+    url_sui = f"https://46.flashscore.ninja/2/x/feed/df_sui_1_{clean_id}"
+    try:
+        raw_sui = _fetch_url(url_sui, timeout=6)
+        if raw_sui:
+            for part in raw_sui.split("~"):
+                if "IA÷2" in part and any(k in part for k in ("Red Card", "Tarj. roja", "Tarjeta roja", "Roja")):
+                    return True
+    except Exception:
+        pass
+
+    # 2. Estadísticas de 2do tiempo
+    url_st = f"https://46.flashscore.ninja/2/x/feed/df_st_1_{clean_id}"
+    try:
+        raw_st = _fetch_url(url_st, timeout=6)
+        if raw_st and ("SE÷2nd Half" in raw_st or "SE÷2do tiempo" in raw_st or "SE÷2nd" in raw_st):
+            delim = "SE÷2nd Half" if "SE÷2nd Half" in raw_st else ("SE÷2do tiempo" if "SE÷2do tiempo" in raw_st else "SE÷2nd")
+            bloque_2t = raw_st.split(delim)[1].split("SE÷")[0]
+            for it in bloque_2t.split("~"):
+                if "SG÷" in it and any(k in it for k in ("Red cards", "Tarjetas rojas")):
+                    sh = re.search(r"SH÷(\d+)", it)
+                    si = re.search(r"SI÷(\d+)", it)
+                    r_l = int(sh.group(1)) if sh else 0
+                    r_v = int(si.group(1)) if si else 0
+                    if r_l > 0 or r_v > 0:
+                        return True
+    except Exception:
+        pass
+
+    return False
+
+
+def obtener_perfil_prematch_fs(match_id: str, max_partidos: int = 15) -> Optional[Dict[str, Any]]:
+    """
+    Extrae de forma nativa e independiente el historial previo de ambos equipos desde Flashscore (feed df_hh_1).
+    Calcula:
+      - Estabilidad histórica Under 3.5 de ambos equipos (pct_35_local, pct_35_visita, estab_35).
+      - Promedio de goles recientes y expectativa ofensiva previa (esp_total).
+      - Muestra de partidos analizados (n_local, n_visita).
+    Elimina por completo la necesidad de traducir o sincronizar nombres hacia ESPN.
+    """
+    clean_id = match_id.replace("FS_", "")
+    url = f"https://46.flashscore.ninja/2/x/feed/df_hh_1_{clean_id}"
+    raw = _fetch_url(url, timeout=6)
+    if not raw:
+        return None
+
+    bloques = raw.split("~KB÷")
+    regs_l = []
+    regs_v = []
+
+    for b in bloques:
+        header = b.split("¬")[0]
+        if "Last matches:" in header:
+            items = b.split("~KC÷")
+            matches_data = []
+            for item in items[1:]:
+                g_l = None
+                g_v = None
+                for line in item.split("¬"):
+                    if line.startswith("KU÷"):
+                        try:
+                            g_l = int(line.split("÷")[1])
+                        except Exception:
+                            pass
+                    elif line.startswith("KT÷"):
+                        try:
+                            g_v = int(line.split("÷")[1])
+                        except Exception:
+                            pass
+                if g_l is not None and g_v is not None:
+                    matches_data.append({"gl": g_l, "gv": g_v, "tot": g_l + g_v})
+
+            if not regs_l and matches_data:
+                regs_l = matches_data[:max_partidos]
+            elif not regs_v and matches_data:
+                regs_v = matches_data[:max_partidos]
+                break
+
+    if not regs_l or not regs_v:
+        return None
+
+    n_l = len(regs_l)
+    n_v = len(regs_v)
+    if n_l < 5 or n_v < 5:
+        return None
+
+    u35_l = sum(1 for m in regs_l if m["tot"] < 3.5)
+    u35_v = sum(1 for m in regs_v if m["tot"] < 3.5)
+
+    pct_35_l = (u35_l / n_l) * 100.0
+    pct_35_v = (u35_v / n_v) * 100.0
+    estab_35 = (pct_35_l + pct_35_v) / 2.0
+
+    avg_l = sum(m["tot"] for m in regs_l) / n_l
+    avg_v = sum(m["tot"] for m in regs_v) / n_v
+    esp_total = (avg_l + avg_v) / 2.0
+
+    return {
+        "n_local": n_l,
+        "n_visita": n_v,
+        "pct_35_local": round(pct_35_l, 1),
+        "pct_35_visita": round(pct_35_v, 1),
+        "estab_35": round(estab_35, 1),
+        "avg_goles_local": round(avg_l, 2),
+        "avg_goles_visita": round(avg_v, 2),
+        "esp_total": round(esp_total, 2)
+    }

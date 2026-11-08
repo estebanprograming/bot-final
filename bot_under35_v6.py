@@ -188,7 +188,7 @@ LIGAS: dict[str, dict[str, str]] = {
     "eng.2": {"id": "3914", "nombre": "Championship (Inglaterra)"},
     "eng.3": {"id": "3915", "nombre": "League One (Inglaterra)"},
     "eng.4": {"id": "3916", "nombre": "League Two (Inglaterra)"},
-    "eng.5": {"id": "3917", "nombre": "National League (Inglaterra)"},
+    # eng.5 (National League / 5ª división) excluida por alta volatilidad estadística e inestabilidad defensiva
     "esp.1": {"id": "740", "nombre": "LaLiga (Espana)"},
     "esp.2": {"id": "3921", "nombre": "LaLiga 2 (Espana)"},
     "ita.1": {"id": "730", "nombre": "Serie A (Italia)"},

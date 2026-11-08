@@ -112,6 +112,24 @@ def registrar_partido_analizado(event_id: str, fecha: str, hora: str, liga: str,
         conn.commit()
 
 
+def registrar_lote_partidos_analizados(lote: list):
+    """Inserta o actualiza un lote completo de partidos en una única transacción ultraveloz."""
+    if not lote:
+        return
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.executemany("""
+            INSERT INTO partidos_analizados (event_id, fecha, hora, liga, local, visitante, ht, estado, diagnostico, creado_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_id) DO UPDATE SET 
+                hora = CASE WHEN excluded.hora != '' THEN excluded.hora ELSE partidos_analizados.hora END,
+                ht = CASE WHEN excluded.ht != '' THEN excluded.ht ELSE partidos_analizados.ht END,
+                estado = excluded.estado,
+                diagnostico = CASE WHEN excluded.diagnostico != '' THEN excluded.diagnostico ELSE partidos_analizados.diagnostico END
+        """, lote)
+        conn.commit()
+
+
 def obtener_radar_hoy(fecha_hoy: str) -> list:
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -180,6 +198,38 @@ def actualizar_resultado_apuesta(event_id: str, ft: str, win: int):
                     WHERE fecha = ?
                 """, (str(fecha),))
         conn.commit()
+
+
+def actualizar_resultado_ft(event_id: str, ft: str, total_ft: int):
+    """Calcula automáticamente win (1 o 0) comparando con la línea apostada y actualiza en DB."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT linea FROM apuestas WHERE event_id = ?", (str(event_id),))
+        row = cursor.fetchone()
+        if not row:
+            return
+        linea = float(row["linea"])
+        win = 1 if total_ft < linea else 0
+    actualizar_resultado_apuesta(event_id, ft, win)
+
+
+def obtener_apuestas_pendientes(fecha_hoy: str = None) -> list:
+    """Devuelve las apuestas en juego para recuperar memoria tras reinicios de Render."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if fecha_hoy:
+            cursor.execute("""
+                SELECT event_id, fecha, liga, local, visitante, ht, linea, estado
+                FROM apuestas
+                WHERE estado = 'EN_JUEGO' AND fecha = ?
+            """, (str(fecha_hoy),))
+        else:
+            cursor.execute("""
+                SELECT event_id, fecha, liga, local, visitante, ht, linea, estado
+                FROM apuestas
+                WHERE estado = 'EN_JUEGO'
+            """)
+        return [dict(r) for r in cursor.fetchall()]
 
 
 def obtener_metricas_globales(fecha_hoy: str) -> dict:
