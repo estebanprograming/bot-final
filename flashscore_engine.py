@@ -8,6 +8,7 @@ directamente de los feeds de estadio de Flashscore.
 
 import re
 import time
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import requests
 
@@ -49,13 +50,17 @@ def _fetch_url(url: str, timeout: int = 15) -> str:
     return ""
 
 
-def obtener_partidos_dia(modo: str = "en_vivo") -> List[Dict[str, Any]]:
+def obtener_partidos_dia(modo: Any = "todos", day_offset: int = 0) -> List[Dict[str, Any]]:
     """
-    modo: 'en_vivo' (feed 1 - Ultrarrápido, solo partidos activos) o 'todos' (feed 0 - Jornada completa)
+    modo: 'en_vivo' (retorna solo partidos activos de hoy) o 'todos' (jornada completa de hoy)
+    day_offset: 0 para hoy, 1 mañana, -1 ayer.
     Parsea los tokens delimitados por '~' de Flashscore.
     """
-    feed_code = "1" if modo == "en_vivo" else "0"
-    url = f"https://46.flashscore.ninja/2/x/feed/f_1_{feed_code}_3_es_1"
+    if isinstance(modo, int):
+        day_offset = modo
+        modo = "todos"
+
+    url = f"https://46.flashscore.ninja/2/x/feed/f_1_{day_offset}_3_es_1"
     raw = _fetch_url(url, timeout=20 if modo == "todos" else 12)
     if not raw:
         return []
@@ -95,11 +100,24 @@ def obtener_partidos_dia(modo: str = "en_vivo") -> List[Dict[str, Any]]:
             ft_h = int(ag_m.group(1)) if ag_m else None
             ft_a = int(ah_m.group(1)) if ah_m else None
 
-            # Marcador parcial de primer tiempo si viene en cabecera
+            # Hora programada oficial desde timestamp Unix AD÷ (zona Colombia UTC-5)
+            ad_m = re.search(r"AD÷(\d+)", p)
+            hora_str = ""
+            if ad_m:
+                try:
+                    ts = int(ad_m.group(1))
+                    dt_col = datetime.fromtimestamp(ts, tz=timezone(timedelta(hours=-5)))
+                    hora_str = dt_col.strftime("%H:%M")
+                except Exception:
+                    pass
+
+            # Marcador parcial de primer tiempo (Flashscore entrega BC÷ y BD÷ en feeds 0/1)
+            bc_m = re.search(r"BC÷(\d+)", p)
+            bd_m = re.search(r"BD÷(\d+)", p)
             ba_m = re.search(r"BA÷(\d+)", p)
             bb_m = re.search(r"BB÷(\d+)", p)
-            ht_h = int(ba_m.group(1)) if ba_m else None
-            ht_a = int(bb_m.group(1)) if bb_m else None
+            ht_h = int(bc_m.group(1)) if bc_m else (int(ba_m.group(1)) if ba_m else None)
+            ht_a = int(bd_m.group(1)) if bd_m else (int(bb_m.group(1)) if bb_m else None)
 
             # Minuto, periodo o reloj (AC contiene el código exacto de etapa: 12 = Descanso)
             ac_m = re.search(r"AC÷([^¬]+)", p)
@@ -122,6 +140,7 @@ def obtener_partidos_dia(modo: str = "en_vivo") -> List[Dict[str, Any]]:
                 "liga": current_league,
                 "local": home,
                 "visitante": away,
+                "hora": hora_str,
                 "status": effective_status,
                 "reloj": reloj,
                 "es_descanso": es_descanso,
@@ -132,6 +151,9 @@ def obtener_partidos_dia(modo: str = "en_vivo") -> List[Dict[str, Any]]:
                 "ft_l": ft_h,
                 "ft_v": ft_a,
             })
+
+    if modo == "en_vivo":
+        return [p for p in partidos if p.get("es_en_vivo")]
 
     return partidos
 

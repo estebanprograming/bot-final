@@ -232,39 +232,102 @@ def obtener_apuestas_pendientes(fecha_hoy: str = None) -> list:
         return [dict(r) for r in cursor.fetchall()]
 
 
+def obtener_apuestas_hoy(fecha_hoy: str) -> list:
+    """Devuelve únicamente las apuestas ejecutadas en la fecha actual."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT fecha, hora, liga, local, visitante, ht, sot_pierde, sot_tot, linea, ft, estado, win, motivo
+            FROM apuestas
+            WHERE fecha = ?
+            ORDER BY hora ASC
+        """, (str(fecha_hoy),))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def obtener_partidos_descartados_hoy(fecha_hoy: str) -> list:
+    """Devuelve la lista de partidos de hoy con su motivo exacto de descarte o diagnóstico."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT hora, liga, local, visitante, ht, estado, diagnostico
+            FROM partidos_analizados
+            WHERE fecha = ? AND (diagnostico LIKE 'Descartado%' OR diagnostico != '')
+            ORDER BY hora ASC, liga ASC
+        """, (str(fecha_hoy),))
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def obtener_metricas_globales(fecha_hoy: str) -> dict:
     with get_connection() as conn:
         cursor = conn.cursor()
         
-        # Conteo exacto de partidos unicos analizados hoy
+        # Conteo exacto de partidos únicos analizados hoy
         cursor.execute("SELECT COUNT(DISTINCT event_id) as cnt FROM partidos_analizados WHERE fecha = ?", (fecha_hoy,))
         r_hoy = cursor.fetchone()
         analizados_hoy = r_hoy["cnt"] if r_hoy else 0
 
-        # Conteo exacto de partidos unicos historico acumulado
+        # Conteo exacto de partidos únicos histórico acumulado
         cursor.execute("SELECT COUNT(DISTINCT event_id) as cnt FROM partidos_analizados")
         r_tot = cursor.fetchone()
         analizados_historico = r_tot["cnt"] if r_tot else analizados_hoy
 
-        # Metricas de apuestas
-        cursor.execute("SELECT COUNT(*) as total, SUM(CASE WHEN win=1 THEN 1 ELSE 0 END) as w, SUM(CASE WHEN win=0 THEN 1 ELSE 0 END) as l, SUM(CASE WHEN estado='EN_JUEGO' THEN 1 ELSE 0 END) as p FROM apuestas")
-        r_ap = cursor.fetchone()
-        total_apuestas = r_ap["total"] or 0
-        ganadas = r_ap["w"] or 0
-        perdidas = r_ap["l"] or 0
-        pendientes = r_ap["p"] or 0
+        # Métricas de apuestas de HOY
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN win=1 THEN 1 ELSE 0 END) as w,
+                SUM(CASE WHEN win=0 THEN 1 ELSE 0 END) as l,
+                SUM(CASE WHEN estado='EN_JUEGO' THEN 1 ELSE 0 END) as p
+            FROM apuestas
+            WHERE fecha = ?
+        """, (fecha_hoy,))
+        r_ap_hoy = cursor.fetchone()
+        apuestas_hoy = r_ap_hoy["total"] or 0
+        ganadas_hoy = r_ap_hoy["w"] or 0
+        perdidas_hoy = r_ap_hoy["l"] or 0
+        pendientes_hoy = r_ap_hoy["p"] or 0
+        resueltas_hoy = ganadas_hoy + perdidas_hoy
+        efectividad_hoy = (100.0 * ganadas_hoy / resueltas_hoy) if resueltas_hoy > 0 else 0.0
 
-        resueltas = ganadas + perdidas
-        efectividad = (100.0 * ganadas / resueltas) if resueltas > 0 else 0.0
+        # Métricas de apuestas HISTÓRICO ACUMULADO
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN win=1 THEN 1 ELSE 0 END) as w,
+                SUM(CASE WHEN win=0 THEN 1 ELSE 0 END) as l,
+                SUM(CASE WHEN estado='EN_JUEGO' THEN 1 ELSE 0 END) as p
+            FROM apuestas
+        """)
+        r_ap_hist = cursor.fetchone()
+        total_historico = r_ap_hist["total"] or 0
+        ganadas_historico = r_ap_hist["w"] or 0
+        perdidas_historico = r_ap_hist["l"] or 0
+        pendientes_historico = r_ap_hist["p"] or 0
+        resueltas_hist = ganadas_historico + perdidas_historico
+        efectividad_historico = (100.0 * ganadas_historico / resueltas_hist) if resueltas_hist > 0 else 0.0
 
         return {
             "analizados_hoy": analizados_hoy,
             "analizados_historico": analizados_historico,
-            "total_apuestas": total_apuestas,
-            "ganadas": ganadas,
-            "perdidas": perdidas,
-            "pendientes": pendientes,
-            "efectividad": efectividad
+            # Balance de Hoy
+            "apuestas_hoy": apuestas_hoy,
+            "ganadas_hoy": ganadas_hoy,
+            "perdidas_hoy": perdidas_hoy,
+            "pendientes_hoy": pendientes_hoy,
+            "efectividad_hoy": efectividad_hoy,
+            # Balance Histórico Acumulado
+            "total_historico": total_historico,
+            "ganadas_historico": ganadas_historico,
+            "perdidas_historico": perdidas_historico,
+            "pendientes_historico": pendientes_historico,
+            "efectividad_historico": efectividad_historico,
+            # Compatibilidad
+            "total_apuestas": total_historico,
+            "ganadas": ganadas_historico,
+            "perdidas": perdidas_historico,
+            "pendientes": pendientes_historico,
+            "efectividad": efectividad_historico,
         }
 
 
@@ -340,8 +403,8 @@ class NumberedCanvas(canvas.Canvas):
 
 def generar_pdf_estadisticas(ruta_pdf: str, fecha_hoy: str) -> str:
     metricas = obtener_metricas_globales(fecha_hoy)
-    desglose_dias = obtener_desglose_dias()
-    apuestas = obtener_todas_apuestas()
+    apuestas_hoy = obtener_apuestas_hoy(fecha_hoy)
+    partidos_hoy = obtener_radar_hoy(fecha_hoy)
 
     doc = SimpleDocTemplate(
         ruta_pdf,
@@ -354,7 +417,7 @@ def generar_pdf_estadisticas(ruta_pdf: str, fecha_hoy: str) -> str:
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=15, leading=19, textColor=colors.HexColor("#1A365D"), spaceAfter=2)
     sub_style = ParagraphStyle('DocSub', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=11, textColor=colors.HexColor("#4A5568"), spaceAfter=6)
-    h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=10, leading=13, textColor=colors.HexColor("#2B6CB0"), spaceBefore=5, spaceAfter=3)
+    h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=10, leading=13, textColor=colors.HexColor("#2B6CB0"), spaceBefore=8, spaceAfter=4)
     body_bold = ParagraphStyle('BodyB', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=7.5, leading=10, textColor=colors.HexColor("#1A202C"))
 
     th_style = ParagraphStyle('TH', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=6.5, leading=8, textColor=colors.HexColor("#1A365D"), alignment=1)
@@ -368,23 +431,24 @@ def generar_pdf_estadisticas(ruta_pdf: str, fecha_hoy: str) -> str:
     story = []
 
     # =========================================================================
-    # PÁGINA 1: PORTADA, CUADRO DE MANDOS Y DESGLOSE POR DÍA
+    # ENCABEZADO Y CUADRO DE MANDOS DEL DÍA DE HOY
     # =========================================================================
-    story.append(Paragraph("INFORME ESTADÍSTICO EN VIVO — BOT 14/15 DEFINITIVO", title_style))
-    story.append(Paragraph(f"Auditoría Oficial Generada a Petición del Usuario | Fecha de Corte: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", sub_style))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2B6CB0"), spaceAfter=5))
+    story.append(Paragraph("AUDITORÍA OFICIAL DEL DÍA — BOT 14/15 EN VIVO", title_style))
+    story.append(Paragraph(f"Auditoría Oficial de la Jornada: <b>{fecha_hoy}</b> | Generado en vivo: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", sub_style))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2B6CB0"), spaceAfter=6))
 
-    # Cajas KPI
+    # Cajas KPI centradas en el DÍA DE HOY
+    ef_hoy_txt = f"{metricas['efectividad_hoy']:.1f}%" if (metricas['ganadas_hoy'] + metricas['perdidas_hoy']) > 0 else "100.0%"
     kpi_box = [
         [
-            Paragraph(f"<b>PARTIDOS ANALIZADOS HOY:</b><br/><font size='11' color='#1A365D'><b>{metricas['analizados_hoy']}</b></font>", body_bold),
-            Paragraph(f"<b>PARTIDOS ANALIZADOS HISTÓRICO:</b><br/><font size='11' color='#1A365D'><b>{metricas['analizados_historico']}</b></font>", body_bold),
-            Paragraph(f"<b>TOTAL ENTRADAS REALIZADAS:</b><br/><font size='11' color='#2B6CB0'><b>{metricas['total_apuestas']}</b></font>", body_bold),
+            Paragraph(f"<b>PARTIDOS MONITOREADOS HOY:</b><br/><font size='11' color='#1A365D'><b>{metricas['analizados_hoy']}</b></font>", body_bold),
+            Paragraph(f"<b>APUESTAS EJECUTADAS HOY:</b><br/><font size='11' color='#2B6CB0'><b>{metricas['apuestas_hoy']}</b></font>", body_bold),
+            Paragraph(f"<b>EFECTIVIDAD DE HOY:</b><br/><font size='11' color='#22543D'><b>{ef_hoy_txt}</b></font>", body_bold),
         ],
         [
-            Paragraph(f"<b>APUESTAS GANADAS:</b><br/><font size='11' color='#22543D'><b>{metricas['ganadas']}</b></font>", body_bold),
-            Paragraph(f"<b>APUESTAS PERDIDAS:</b><br/><font size='11' color='#742A2A'><b>{metricas['perdidas']}</b></font>", body_bold),
-            Paragraph(f"<b>EFECTIVIDAD REAL EN VIVO:</b><br/><font size='11' color='#22543D'><b>{metricas['efectividad']:.1f}%</b></font>", body_bold),
+            Paragraph(f"<b>GANADAS HOY:</b><br/><font size='11' color='#22543D'><b>{metricas['ganadas_hoy']}</b></font>", body_bold),
+            Paragraph(f"<b>PERDIDAS HOY:</b><br/><font size='11' color='#742A2A'><b>{metricas['perdidas_hoy']}</b></font>", body_bold),
+            Paragraph(f"<b>EN JUEGO AHORA:</b><br/><font size='11' color='#2B6CB0'><b>{metricas['pendientes_hoy']}</b></font>", body_bold),
         ]
     ]
     t_kpi = Table(kpi_box, colWidths=[180, 180, 180])
@@ -397,56 +461,14 @@ def generar_pdf_estadisticas(ruta_pdf: str, fecha_hoy: str) -> str:
     story.append(t_kpi)
     story.append(Spacer(1, 8))
 
-    story.append(Paragraph("1. Desglose Estadístico Día por Día", h2_style))
-    
-    t_dias_data = [[
-        Paragraph("<b>Fecha</b>", th_style),
-        Paragraph("<b>Analizados</b>", th_style),
-        Paragraph("<b>Entradas HT</b>", th_style),
-        Paragraph("<b>Ganadas</b>", th_style),
-        Paragraph("<b>Perdidas</b>", th_style),
-        Paragraph("<b>En Juego</b>", th_style),
-        Paragraph("<b>Efectividad Día</b>", th_style),
-    ]]
-
-    if not desglose_dias:
-        t_dias_data.append([
-            Paragraph("Sin registros aún", tc_center),
-            Paragraph("0", tc_center), Paragraph("0", tc_center),
-            Paragraph("0", tc_center), Paragraph("0", tc_center),
-            Paragraph("0", tc_center), Paragraph("100.0%", tc_center)
-        ])
-    else:
-        for d in desglose_dias:
-            res_d = d["ganadas"] + d["perdidas"]
-            ef_d = f"{(100.0 * d['ganadas'] / res_d):.1f}%" if res_d > 0 else "N/A"
-            t_dias_data.append([
-                Paragraph(str(d["fecha"]), tc_norm),
-                Paragraph(str(d["total_analizados"]), tc_center),
-                Paragraph(f"<b>{d['total_entradas']}</b>", tc_bold),
-                Paragraph(str(d["ganadas"]), tc_win),
-                Paragraph(str(d["perdidas"]), tc_loss if d["perdidas"] > 0 else tc_center),
-                Paragraph(str(d["pendientes"]), tc_pend if d["pendientes"] > 0 else tc_center),
-                Paragraph(f"<b>{ef_d}</b>", tc_win if ef_d != "N/A" and float(ef_d.replace('%','')) >= 90 else tc_bold),
-            ])
-
-    t_dias = Table(t_dias_data, colWidths=[80, 80, 75, 75, 75, 75, 80])
-    t_dias.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#EDF2F7")),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E0")),
-        ('PADDING', (0,0), (-1,-1), 3),
-    ]))
-    story.append(t_dias)
-    story.append(Spacer(1, 10))
-
     # =========================================================================
-    # DETALLE DE APUESTAS REALIZADAS
+    # SECCIÓN 1: APUESTAS EJECUTADAS HOY
     # =========================================================================
-    story.append(Paragraph("2. Historial Detallado de Apuestas Realizadas al Minuto 45", h2_style))
+    story.append(Paragraph(f"1. Apuestas Ejecutadas Hoy ({fecha_hoy})", h2_style))
     
     t_ap_data = [[
-        Paragraph("<b>Fecha/Hora</b>", th_style),
-        Paragraph("<b>Partido</b>", th_style),
+        Paragraph("<b>Hora</b>", th_style),
+        Paragraph("<b>Partido (Local vs Visitante)</b>", th_style),
         Paragraph("<b>Liga</b>", th_style),
         Paragraph("<b>HT</b>", th_style),
         Paragraph("<b>SOT</b>", th_style),
@@ -455,79 +477,115 @@ def generar_pdf_estadisticas(ruta_pdf: str, fecha_hoy: str) -> str:
         Paragraph("<b>Resultado</b>", th_style),
     ]]
 
-    if not apuestas:
+    if not apuestas_hoy:
         t_ap_data.append([
-            Paragraph("En espera de partidos", tc_center),
-            Paragraph("No se han ejecutado entradas aún en la sesión", tc_norm),
+            Paragraph("-", tc_center),
+            Paragraph("<i>Sin apuestas ejecutadas aún hoy (Filtros protegiendo capital ante tiros excesivos o sin valor)</i>", tc_norm),
             Paragraph("-", tc_center), Paragraph("-", tc_center),
             Paragraph("-", tc_center), Paragraph("-", tc_center),
             Paragraph("-", tc_center), Paragraph("EN ESPERA", tc_center)
         ])
     else:
-        for a in apuestas:
+        for a in apuestas_hoy:
             st_res = tc_win if a["win"] == 1 else (tc_loss if a["win"] == 0 else tc_pend)
             res_txt = "GANADA" if a["win"] == 1 else ("PERDIDA" if a["win"] == 0 else "EN JUEGO")
             sot_info = f"pierde={a['sot_pierde']}" if a["linea"] == 3.5 else f"tot={a['sot_tot']}"
-            loc_a = html.escape(str(a.get("local", ""))[:18])
-            vis_a = html.escape(str(a.get("visitante", ""))[:18])
-            liga_a = html.escape(str(a.get("liga", ""))[:8])
+            loc_a = html.escape(str(a.get("local", ""))[:20])
+            vis_a = html.escape(str(a.get("visitante", ""))[:20])
+            liga_a = html.escape(str(a.get("liga", ""))[:18])
             t_ap_data.append([
-                Paragraph(f"{str(a['fecha'])[-5:]} {a['hora'][:5]}", tc_norm),
-                Paragraph(f"{loc_a} vs {vis_a}", tc_norm),
-                Paragraph(liga_a, tc_center),
+                Paragraph(str(a.get('hora', ''))[:5], tc_center),
+                Paragraph(f"<b>{loc_a}</b> vs {vis_a}", tc_norm),
+                Paragraph(liga_a, tc_norm),
                 Paragraph(str(a["ht"]), tc_center),
                 Paragraph(sot_info, tc_center),
                 Paragraph(f"-{a['linea']}", tc_center),
-                Paragraph(str(a["ft"]), tc_center),
+                Paragraph(str(a.get("ft", "-")), tc_center),
                 Paragraph(res_txt, st_res),
             ])
 
-    t_ap = Table(t_ap_data, colWidths=[65, 175, 55, 35, 65, 40, 45, 60])
+    t_ap = Table(t_ap_data, colWidths=[40, 190, 110, 35, 55, 35, 35, 40])
     t_ap.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#EDF2F7")),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor("#CBD5E0")),
         ('PADDING', (0,0), (-1,-1), 2.5),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor("#F7FAFC")]),
     ]))
     story.append(t_ap)
     story.append(Spacer(1, 10))
 
     # =========================================================================
-    # SECCIÓN 3: RADAR DE PARTIDOS ANALIZADOS Y EN VIGILANCIA HOY
+    # SECCIÓN 2: AUDITORÍA DETALLADA DE PARTIDOS DESCARTADOS HOY Y MOTIVOS EXACTOS
     # =========================================================================
-    partidos_hoy = obtener_radar_hoy(fecha_hoy)
-    if partidos_hoy:
-        story.append(KeepTogether([
-            Paragraph("3. Radar de Partidos Analizados y en Vigilancia (Jornada de Hoy)", h2_style),
-            Paragraph(f"Lista en tiempo real de los {len(partidos_hoy)} encuentros detectados en el radar de hoy, su estado y el dictamen técnico del bot.", sub_style)
-        ]))
-        t_rad_data = [[
-            Paragraph("<b>Hora</b>", th_style),
-            Paragraph("<b>Liga</b>", th_style),
-            Paragraph("<b>Partido (Local vs Visita)</b>", th_style),
-            Paragraph("<b>HT</b>", th_style),
-            Paragraph("<b>Diagnóstico y Estado del Bot</b>", th_style),
-        ]]
-        for p in partidos_hoy[:35]:
+    story.append(KeepTogether([
+        Paragraph("2. Auditoría Detallada de Partidos Analizados y Descartados Hoy", h2_style),
+        Paragraph(f"Registro en tiempo real de todos los partidos monitoreados hoy ({len(partidos_hoy)} eventos) con su estado y el motivo técnico exacto de descarte.", sub_style)
+    ]))
+
+    t_rad_data = [[
+        Paragraph("<b>Hora</b>", th_style),
+        Paragraph("<b>Liga</b>", th_style),
+        Paragraph("<b>Partido (Local vs Visitante)</b>", th_style),
+        Paragraph("<b>Marcador/HT</b>", th_style),
+        Paragraph("<b>Dictamen Técnico Oficial (Motivo Exacto)</b>", th_style),
+    ]]
+
+    if not partidos_hoy:
+        t_rad_data.append([
+            Paragraph("-", tc_center), Paragraph("-", tc_center),
+            Paragraph("<i>Iniciando radar de la jornada...</i>", tc_norm),
+            Paragraph("-", tc_center), Paragraph("Sondeando Flashscore y ESPN", tc_norm)
+        ])
+    else:
+        for p in partidos_hoy[:120]:
             loc_s = html.escape(str(p.get("local", ""))[:18])
             vis_s = html.escape(str(p.get("visitante", ""))[:18])
             liga_s = html.escape(str(p.get("liga", ""))[:20])
-            diag_s = html.escape(str(p.get("diagnostico", p.get("estado", "")))[:45])
+            ht_val = html.escape(str(p.get("ht", "")))
+            if not ht_val or ht_val == "SIN_HT":
+                ht_val = "1T"
+            diag_s = html.escape(str(p.get("diagnostico", p.get("estado", "")))[:65])
             t_rad_data.append([
                 Paragraph(html.escape(str(p.get("hora", ""))[:5]), tc_center),
                 Paragraph(liga_s, tc_norm),
                 Paragraph(f"<b>{loc_s}</b> vs {vis_s}", tc_norm),
-                Paragraph(html.escape(str(p.get("ht", "SIN_HT"))), tc_center),
+                Paragraph(ht_val, tc_center),
                 Paragraph(diag_s, tc_norm),
             ])
-        t_rad = Table(t_rad_data, colWidths=[40, 115, 170, 50, 165])
-        t_rad.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor("#CBD5E0")),
-            ('PADDING', (0,0), (-1,-1), 2.5),
-            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor("#F7FAFC")]),
-        ]))
-        story.append(t_rad)
+
+    t_rad = Table(t_rad_data, colWidths=[38, 110, 160, 48, 184])
+    t_rad.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#2B6CB0")),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor("#CBD5E0")),
+        ('PADDING', (0,0), (-1,-1), 2.2),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor("#F7FAFC")]),
+    ]))
+    story.append(t_rad)
+    story.append(Spacer(1, 10))
+
+    # =========================================================================
+    # SECCIÓN 3: CUADRO DE CERTIFICACIÓN HISTÓRICA ACUMULADA
+    # =========================================================================
+    story.append(Paragraph("3. Respaldo y Certificación Histórica Acumulada", h2_style))
+    hist_txt = (
+        f"<b>Partidos auditados histórico total:</b> {metricas['analizados_historico']} | "
+        f"<b>Total apuestas ejecutadas:</b> {metricas['total_historico']} "
+        f"({metricas['ganadas_historico']}W - {metricas['perdidas_historico']}L) | "
+        f"<b>Efectividad histórica certificada:</b> {metricas['efectividad_historico']:.1f}%"
+    )
+    p_hist = Paragraph(hist_txt, body_bold)
+    t_hist = Table([[p_hist]], colWidths=[540])
+    t_hist.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#EDF2F7")),
+        ('BOX', (0,0), (-1,-1), 0.8, colors.HexColor("#CBD5E0")),
+        ('PADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(t_hist)
+
+    doc.build(story, canvasmaker=NumberedCanvas)
+    return ruta_pdf
 
     doc.build(story, canvasmaker=NumberedCanvas)
     return ruta_pdf

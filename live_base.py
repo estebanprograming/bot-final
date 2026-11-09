@@ -90,25 +90,28 @@ def escuchador_comandos_telegram(token: str, chat_id_objetivo: str):
                             if en_juego:
                                 txt.append(f"🟡 <b>EN JUEGO ({len(en_juego)} PARTIDOS VIGILÁNDOSE EN VIVO):</b>")
                                 for p in en_juego[:8]:
-                                    txt.append(f"• <b>{p['local']} vs {p['visitante']}</b> ({p['ht']})\n  👉 <i>{p['diagnostico']}</i>")
+                                    marcador_label = f"(HT {p['ht']})" if (p.get('ht') and p['ht'] not in ("SIN_HT", "0-0", "1T")) else "[1T En Juego]"
+                                    txt.append(f"• <b>{p['local']} vs {p['visitante']}</b> {marcador_label}\n  👉 <i>{p['diagnostico']}</i>")
                                 if len(en_juego) > 8:
                                     txt.append(f"  <i>...y {len(en_juego)-8} partidos más rodando ahora mismo.</i>")
                                 txt.append("")
                                 
                             if programados:
                                 txt.append(f"⚪ <b>PROGRAMADOS PARA HOY ({len(programados)} partidos):</b>")
-                                for p in programados[:6]:
-                                    h_str = f"{p['hora'][:5]} | " if (p['hora'] and ":" in p['hora']) else ""
-                                    txt.append(f"• {h_str}{p['liga'][:22]}: {p['local']} vs {p['visitante']}")
-                                if len(programados) > 6:
-                                    txt.append(f"  <i>...y {len(programados)-6} partidos más en el calendario de hoy.</i>")
+                                for p in programados[:8]:
+                                    h_str = f"[{p['hora'][:5]}] " if (p.get('hora') and ":" in p['hora'] and p['hora'][:5] != '00:00') else ""
+                                    txt.append(f"• {h_str}<b>{p['local']} vs {p['visitante']}</b> — <i>{p['liga'][:22]}</i>")
+                                if len(programados) > 8:
+                                    txt.append(f"  <i>...y {len(programados)-8} partidos más en el calendario de hoy.</i>")
                                 txt.append("")
                                 
                             if finalizados:
                                 txt.append(f"🏁 <b>FINALIZADOS HOY:</b> {len(finalizados)} partidos completados en la jornada.")
                                 
-                            txt.append(f"\n📊 <b>BALANCE CERTIFICADO:</b> {m['total_apuestas']} entradas ({m['ganadas']}W - {m['perdidas']}L) | <b>{m['efectividad']:.1f}% Efectividad</b>")
-                            txt.append("\n📄 <i>Escribe 'ESTADISTICAS' para descargar el PDF completo o 'DESCARGAR LOGS' para la bitácora técnica.</i>")
+                            ef_hoy_txt = f"{m['efectividad_hoy']:.1f}%" if (m['ganadas_hoy'] + m['perdidas_hoy']) > 0 else "100.0%"
+                            txt.append(f"\n📊 <b>BALANCE DE HOY ({fecha_hoy}):</b> {m['apuestas_hoy']} entradas ({m['ganadas_hoy']}W - {m['perdidas_hoy']}L - {m['pendientes_hoy']} en juego) | <b>{ef_hoy_txt} Efectividad Hoy</b>")
+                            txt.append(f"🏆 <i>Histórico certificado acumulado: {m['total_historico']} entradas ({m['ganadas_historico']}W - {m['perdidas_historico']}L) | {m['efectividad_historico']:.1f}% Efectividad</i>")
+                            txt.append("\n📄 <i>Escribe 'ESTADISTICAS' para descargar la Auditoría Oficial en PDF o 'DESCARGAR LOGS' para la bitácora técnica.</i>")
                             comun.enviar_mensaje("\n".join(txt), chat=remitente_chat)
 
                     # 2. COMANDO ESTADISTICAS (REPORTE OFICIAL PDF)
@@ -151,15 +154,20 @@ def escuchador_comandos_telegram(token: str, chat_id_objetivo: str):
                         # Enviar resumen en texto SIEMPRE garantizado
                         try:
                             m = database.obtener_metricas_globales(fecha_hoy)
+                            ef_hoy_str = f"{m['efectividad_hoy']:.1f}%" if (m['ganadas_hoy'] + m['perdidas_hoy']) > 0 else "100.0%"
                             comun.enviar_mensaje(
-                                f"📊 <b>RESUMEN ESTADÍSTICO ACTUALIZADO (BOT 2.0)</b>\n\n"
+                                f"📊 <b>AUDITORÍA ESTADÍSTICA OFICIAL (BOT 2.0)</b>\n\n"
                                 f"📅 <b>Fecha:</b> {fecha_hoy}\n"
-                                f"🔍 <b>Partidos analizados hoy:</b> {m['analizados_hoy']}\n"
-                                f"📈 <b>Partidos analizados histórico:</b> {m['analizados_historico']}\n"
-                                f"🎯 <b>Total entradas ejecutadas:</b> {m['total_apuestas']}\n"
-                                f"✅ <b>Ganadas:</b> {m['ganadas']} | ❌ <b>Perdidas:</b> {m['perdidas']} | ⏳ <b>En juego:</b> {m['pendientes']}\n"
-                                f"🏆 <b>Efectividad Real:</b> {m['efectividad']:.1f}%\n\n"
-                                f"📄 <i>Escribe <code>RADAR</code> para ver los partidos en juego o <code>DESCARGAR LOGS</code> para la bitácora técnica.</i>",
+                                f"🔍 <b>Partidos monitoreados hoy:</b> {m['analizados_hoy']}\n"
+                                f"📈 <b>Partidos monitoreados histórico:</b> {m['analizados_historico']}\n\n"
+                                f"🎯 <b>BALANCE DE HOY:</b>\n"
+                                f"• Total entradas hoy: <b>{m['apuestas_hoy']}</b>\n"
+                                f"• Ganadas: <b>{m['ganadas_hoy']}</b> | Perdidas: <b>{m['perdidas_hoy']}</b> | En juego: <b>{m['pendientes_hoy']}</b>\n"
+                                f"• Efectividad del día: <b>{ef_hoy_str}</b>\n\n"
+                                f"🏆 <b>HISTÓRICO ACUMULADO CERTIFICADO:</b>\n"
+                                f"• Total histórico: <b>{m['total_historico']}</b> entradas ({m['ganadas_historico']}W - {m['perdidas_historico']}L)\n"
+                                f"• Efectividad histórica: <b>{m['efectividad_historico']:.1f}%</b>\n\n"
+                                f"📄 <i>El PDF adjunto contiene el reporte completo con las entradas de hoy y el dictamen técnico de todos los partidos analizados y descartados.</i>",
                                 chat=remitente_chat
                             )
                         except Exception as e_m:
@@ -273,15 +281,41 @@ def es_liga_inestable(torneo: str, local: str, visitante: str) -> tuple[bool, st
     return False, ""
 
 
+PAISES_MAP_PROF = {
+    'colombia': 'colombia', 'argentina': 'argentina', 'brazil': 'brasil', 'brasil': 'brasil',
+    'spain': 'espana', 'espana': 'espana', 'england': 'inglaterra', 'inglaterra': 'inglaterra',
+    'italy': 'italia', 'italia': 'italia', 'germany': 'alemania', 'alemania': 'alemania',
+    'france': 'francia', 'francia': 'francia', 'portugal': 'portugal', 'netherlands': 'paises bajos',
+    'belgium': 'belgica', 'belgica': 'belgica', 'turkey': 'turquia', 'turquia': 'turquia',
+    'scotland': 'escocia', 'escocia': 'escocia', 'greece': 'grecia', 'grecia': 'grecia',
+    'chile': 'chile', 'peru': 'peru', 'ecuador': 'ecuador', 'uruguay': 'uruguay', 'paraguay': 'paraguay',
+    'bolivia': 'bolivia', 'venezuela': 'venezuela', 'mexico': 'mexico', 'usa': 'estados unidos'
+}
+
+
 def es_liga_profesional_permitida(torneo: str) -> bool:
     """Verifica si el torneo pertenece al catálogo de ligas profesionales masculinas oficiales (81 ligas)."""
-    tn = comun.norm(torneo.split(":")[-1]) if ":" in torneo else comun.norm(torneo)
-    pais = comun.norm(torneo.split(":")[0]) if ":" in torneo else ""
-    for v in bot.LIGAS.values():
+    partes = torneo.split(":")
+    pais_raw = comun.norm(partes[0].strip()) if len(partes) > 1 else ""
+    comp_raw = comun.norm(partes[-1].strip())
+
+    # Limpiar sufijos típicos de Flashscore (- Clausura, - Apertura, - Championship Group, etc.)
+    comp_limpio = comp_raw.split("-")[0].strip()
+    pais_trad = PAISES_MAP_PROF.get(pais_raw, pais_raw)
+
+    for slug, v in bot.LIGAS.items():
         ln = comun.norm(v["nombre"])
-        if (tn in ln or ln in tn) and (not pais or pais in ln or any(p in ln for p in pais.split())):
+        # Si viene con país especificado en Flashscore, verificar concordancia de país
+        if pais_raw:
+            pais_match = (pais_raw in ln or pais_trad in ln or any(p in ln for p in pais_raw.split() if len(p) > 3))
+            if not pais_match:
+                continue
+
+        # Palabras clave del torneo
+        palabras_comp = [w for w in comp_limpio.split() if len(w) > 2]
+        if any(w in ln for w in palabras_comp):
             return True
-        if tn in ln:
+        if comp_limpio in ln or ln in comp_limpio:
             return True
     return False
 
@@ -472,9 +506,10 @@ def run_live_247(titulo: str = "BOT FINAL 2.0 FLASHSCORE EN VIVO"):
                 st_radar = "STATUS_IN_PROGRESS"
                 diag_radar = f"En seguimiento ({reloj})"
 
-            ht_s = f"{p.get('ht_l',0)}-{p.get('ht_v',0)}" if (p.get('ht_l') is not None and p.get('ht_v') is not None) else "0-0"
+            ht_s = f"{p.get('ht_l',0)}-{p.get('ht_v',0)}" if (p.get('ht_l') is not None and p.get('ht_v') is not None) else "1T"
+            hora_partido = p.get("hora") or reloj or ""
             init_lote.append((
-                f"FS_{p['id']}", init_hoy, reloj, p.get("liga", "General"),
+                f"FS_{p['id']}", init_hoy, hora_partido, p.get("liga", "General"),
                 p.get("local", "Local"), p.get("visitante", "Visitante"),
                 ht_s, st_radar, diag_radar, datetime.now().isoformat()
             ))
@@ -587,9 +622,10 @@ def run_live_247(titulo: str = "BOT FINAL 2.0 FLASHSCORE EN VIVO"):
                         st_radar = "STATUS_IN_PROGRESS"
                         diag_radar = f"En seguimiento ({reloj})"
 
-                    ht_s = f"{p.get('ht_l',0)}-{p.get('ht_v',0)}" if (p.get('ht_l') is not None and p.get('ht_v') is not None) else "0-0"
+                    ht_s = f"{p.get('ht_l',0)}-{p.get('ht_v',0)}" if (p.get('ht_l') is not None and p.get('ht_v') is not None) else "1T"
+                    hora_partido = p.get("hora") or reloj or ""
                     lote_radar.append((
-                        f"FS_{p['id']}", hoy_str, reloj, p.get("liga", "General"),
+                        f"FS_{p['id']}", hoy_str, hora_partido, p.get("liga", "General"),
                         p.get("local", "Local"), p.get("visitante", "Visitante"),
                         ht_s, st_radar, diag_radar, ahora_dt.isoformat()
                     ))
@@ -705,6 +741,8 @@ def run_live_247(titulo: str = "BOT FINAL 2.0 FLASHSCORE EN VIVO"):
                 ht_score, stats_fs = fs.obtener_datos_exactos_ht(fs_id)
                 if not ht_score and pfs.get("ht_l") is not None and pfs.get("ht_v") is not None:
                     ht_score = (pfs["ht_l"], pfs["ht_v"])
+                elif not ht_score and pfs.get("ft_l") is not None and pfs.get("ft_v") is not None:
+                    ht_score = (pfs["ft_l"], pfs["ft_v"])
 
                 if not ht_score:
                     continue
@@ -880,7 +918,7 @@ def run_live_247(titulo: str = "BOT FINAL 2.0 FLASHSCORE EN VIVO"):
 
                 # Parsear objeto Partido
                 p = bot.parsear_evento(ev, hoy_ymd, live=True) or bot.parsear_evento(ev, hoy_ymd, live=False)
-                ht_str = f"{p.goles_local_ht}-{p.goles_visitante_ht}" if (p and p.tiene_ht) else "SIN_HT"
+                ht_str = f"{p.goles_local_ht}-{p.goles_visitante_ht}" if (p and p.tiene_ht) else "1T"
                 
                 # Actualizar diagnóstico en radar DB
                 clock_txt = str(status_raw.get("displayClock", "")).strip()
@@ -1006,8 +1044,16 @@ def run_live_247(titulo: str = "BOT FINAL 2.0 FLASHSCORE EN VIVO"):
                             else:
                                 diag = f"Descartado HT: {motivo}"
 
+                hora_espn = ""
+                if ev.get("date"):
+                    try:
+                        dt_e = datetime.fromisoformat(str(ev["date"]).replace("Z", "+00:00"))
+                        hora_espn = dt_e.astimezone(bot.ZONA).strftime("%H:%M")
+                    except Exception:
+                        hora_espn = str(ev.get("date", ""))[11:16]
+
                 database.registrar_partido_analizado(
-                    event_id=eid, fecha=hoy_str, hora=str(ev.get("date", ""))[11:16],
+                    event_id=eid, fecha=hoy_str, hora=hora_espn,
                     liga=nombre_liga, local=loc_nom, visitante=vis_nom,
                     ht=ht_str, estado=estado_actual, diagnostico=diag
                 )
